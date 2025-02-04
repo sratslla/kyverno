@@ -28,7 +28,7 @@ import (
 // +kubebuilder:storageversion
 // +kubebuilder:resource:path=clusterpolicyreports,scope="Cluster",shortName=cpolr
 // +kubebuilder:printcolumn:name="Kind",type=string,JSONPath=".scope.kind"
-// +kubebuilder:printcolumn:name="Name",type=string,JSONPath=".scope.name"
+// +kubebuilder:printcolumn:name="Namee",type=string,JSONPath=".scope.name"
 // +kubebuilder:printcolumn:name="Pass",type=integer,JSONPath=".summary.pass"
 // +kubebuilder:printcolumn:name="Fail",type=integer,JSONPath=".summary.fail"
 // +kubebuilder:printcolumn:name="Warn",type=integer,JSONPath=".summary.warn"
@@ -57,6 +57,10 @@ type ClusterPolicyReport struct {
 	// PolicyReportResult provides result details
 	// +optional
 	Results []PolicyReportResult `json:"results,omitempty"`
+
+	// Resource contains the JSON representation of the resource that was evaluated
+	// +optional
+	Resource map[string]interface{} `json:"resource,omitempty"`
 }
 
 func (r *ClusterPolicyReport) GetResults() []PolicyReportResult {
