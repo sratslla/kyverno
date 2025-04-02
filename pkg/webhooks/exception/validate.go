@@ -27,9 +27,7 @@ func (h *exceptionHandlers) Validate(ctx context.Context, logger logr.Logger, re
 		logger.Error(err, "failed to unmarshal policy exceptions from admission request")
 		return admissionutils.Response(request.UID, err)
 	}
-	warnings, err := validation.Validate(ctx, logger, polex, h.validationOptions)
-	if err != nil {
-		logger.Error(err, "policy exception validation errors")
-	}
-	return admissionutils.Response(request.UID, err, warnings...)
+	warnings := validation.ValidateNamespace(ctx, logger, polex.GetNamespace(), h.validationOptions)
+	errs := polex.Validate()
+	return admissionutils.Response(request.UID, errs.ToAggregate(), warnings...)
 }

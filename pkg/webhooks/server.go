@@ -47,6 +47,7 @@ func NewServer(
 	policyHandlers PolicyHandlers,
 	resourceHandlers ResourceHandlers,
 	exceptionHandlers ExceptionHandlers,
+	celExceptionHandlers CELExceptionHandlers,
 	globalContextHandlers GlobalContextHandlers,
 	configuration config.Configuration,
 	metricsConfig metrics.MetricsConfigManager,
@@ -65,14 +66,33 @@ func NewServer(
 	resourceLogger := logger.WithName("resource")
 	policyLogger := logger.WithName("policy")
 	exceptionLogger := logger.WithName("exception")
+	celExceptionLogger := logger.WithName("cel-exception")
 	globalContextLogger := logger.WithName("globalcontext")
 	verifyLogger := logger.WithName("verify")
 	vpolLogger := logger.WithName("vpol")
+	ivpolLogger := logger.WithName("ivpol")
 	registerWebhookHandlersWithAll(
 		mux,
 		"MUTATE",
 		config.MutatingWebhookServicePath,
 		resourceHandlers.Mutation,
+		func(handler handlers.AdmissionHandler) handlers.HttpHandler {
+			return handler.
+				WithFilter(configuration).
+				WithProtection(toggle.FromContext(ctx).ProtectManagedResources()).
+				WithDump(debugModeOpts.DumpPayload).
+				WithTopLevelGVK(discovery).
+				WithRoles(rbLister, crbLister).
+				WithOperationFilter(admissionv1.Create, admissionv1.Update, admissionv1.Connect).
+				WithMetrics(resourceLogger, metricsConfig.Config(), metrics.WebhookMutating).
+				WithAdmission(resourceLogger.WithName("mutate"))
+		},
+	)
+	registerWebhookHandlersWithAll(
+		mux,
+		"IVPOL-MUTATE",
+		config.PolicyServicePath+config.ImageVerificationPolicyServicePath+config.MutatingWebhookServicePath,
+		resourceHandlers.ImageVerificationPoliciesMutation,
 		func(handler handlers.AdmissionHandler) handlers.HttpHandler {
 			return handler.
 				WithFilter(configuration).
@@ -104,7 +124,7 @@ func NewServer(
 	registerWebhookHandlers(
 		mux,
 		"VPOL",
-		config.ValidatingPolicyServicePath,
+		config.PolicyServicePath+config.ValidatingPolicyServicePath+config.ValidatingWebhookServicePath,
 		resourceHandlers.ValidatingPolicies,
 		func(handler handlers.AdmissionHandler) handlers.HttpHandler {
 			return handler.
@@ -115,6 +135,22 @@ func NewServer(
 				WithRoles(rbLister, crbLister).
 				WithMetrics(resourceLogger, metricsConfig.Config(), metrics.WebhookValidating).
 				WithAdmission(vpolLogger.WithName("validate"))
+		},
+	)
+	registerWebhookHandlers(
+		mux,
+		"IVPOL-VALIDATE",
+		config.PolicyServicePath+config.ImageVerificationPolicyServicePath+config.ValidatingWebhookServicePath,
+		resourceHandlers.ImageVerificationPolicies,
+		func(handler handlers.AdmissionHandler) handlers.HttpHandler {
+			return handler.
+				WithFilter(configuration).
+				WithProtection(toggle.FromContext(ctx).ProtectManagedResources()).
+				WithDump(debugModeOpts.DumpPayload).
+				WithTopLevelGVK(discovery).
+				WithRoles(rbLister, crbLister).
+				WithMetrics(resourceLogger, metricsConfig.Config(), metrics.WebhookValidating).
+				WithAdmission(ivpolLogger.WithName("validate"))
 		},
 	)
 	mux.HandlerFunc(
@@ -144,6 +180,16 @@ func NewServer(
 			WithSubResourceFilter().
 			WithMetrics(exceptionLogger, metricsConfig.Config(), metrics.WebhookValidating).
 			WithAdmission(exceptionLogger.WithName("validate")).
+			ToHandlerFunc("VALIDATE"),
+	)
+	mux.HandlerFunc(
+		"POST",
+		config.CELExceptionValidatingWebhookServicePath,
+		handlerFunc("VALIDATE", celExceptionHandlers.Validation, "").
+			WithDump(debugModeOpts.DumpPayload).
+			WithSubResourceFilter().
+			WithMetrics(celExceptionLogger, metricsConfig.Config(), metrics.WebhookValidating).
+			WithAdmission(celExceptionLogger.WithName("validate")).
 			ToHandlerFunc("VALIDATE"),
 	)
 	mux.HandlerFunc(
@@ -233,7 +279,7 @@ func (s *server) cleanup(ctx context.Context) {
 			if err := s.leaseClient.Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 				logger.Error(err, "failed to clean up lease", "name", name)
 			} else if err == nil {
-				logger.Info("successfully deleted leases", "label", kyverno.LabelWebhookManagedBy)
+				logger.V(2).Info("successfully deleted leases", "label", kyverno.LabelWebhookManagedBy)
 			}
 		}
 		deleteVwc := func() {
@@ -242,7 +288,7 @@ func (s *server) cleanup(ctx context.Context) {
 			}); err != nil && !apierrors.IsNotFound(err) {
 				logger.Error(err, "failed to clean up validating webhook configuration", "label", kyverno.LabelWebhookManagedBy)
 			} else if err == nil {
-				logger.Info("successfully deleted validating webhook configurations", "label", kyverno.LabelWebhookManagedBy)
+				logger.V(2).Info("successfully deleted validating webhook configurations", "label", kyverno.LabelWebhookManagedBy)
 			}
 		}
 		deleteMwc := func() {
@@ -251,7 +297,7 @@ func (s *server) cleanup(ctx context.Context) {
 			}); err != nil && !apierrors.IsNotFound(err) {
 				logger.Error(err, "failed to clean up mutating webhook configuration", "label", kyverno.LabelWebhookManagedBy)
 			} else if err == nil {
-				logger.Info("successfully deleted mutating webhook configurations", "label", kyverno.LabelWebhookManagedBy)
+				logger.V(2).Info("successfully deleted mutating webhook configurations", "label", kyverno.LabelWebhookManagedBy)
 			}
 		}
 		deleteLease("kyvernopre-lock")

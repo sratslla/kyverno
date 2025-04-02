@@ -93,7 +93,7 @@ func ToPolicyReportResult(pol engineapi.GenericPolicy, ruleResult engineapi.Rule
 	policyName, _ := cache.MetaNamespaceKeyFunc(pol)
 	annotations := pol.GetAnnotations()
 	result := policyreportv1alpha2.PolicyReportResult{
-		Source:     kyverno.ValueKyvernoApp,
+		Source:     SourceKyverno,
 		Policy:     policyName,
 		Rule:       ruleResult.Name(),
 		Message:    ruleResult.Message(),
@@ -106,6 +106,17 @@ func ToPolicyReportResult(pol engineapi.GenericPolicy, ruleResult engineapi.Rule
 		Category: annotations[kyverno.AnnotationPolicyCategory],
 		Severity: SeverityFromString(annotations[kyverno.AnnotationPolicySeverity]),
 	}
+
+	source := ""
+	if kyvernoPolicy := pol.AsKyvernoPolicy(); kyvernoPolicy != nil {
+		if kyvernoPolicy.BackgroundProcessingEnabled() {
+			source = "background scan"
+		} else if kyvernoPolicy.AdmissionProcessingEnabled() {
+			source = "admission review"
+		}
+	}
+	addProperty("source", source, &result)
+
 	if result.Result == "fail" && !result.Scored {
 		result.Result = "warn"
 	}
@@ -118,7 +129,7 @@ func ToPolicyReportResult(pol engineapi.GenericPolicy, ruleResult engineapi.Rule
 	if len(exceptions) > 0 {
 		var names []string
 		for _, exception := range exceptions {
-			names = append(names, exception.Name)
+			names = append(names, exception.GetName())
 		}
 		addProperty("exceptions", strings.Join(names, ","), &result)
 	}
@@ -127,11 +138,17 @@ func ToPolicyReportResult(pol engineapi.GenericPolicy, ruleResult engineapi.Rule
 		addPodSecurityProperties(pss, &result)
 	}
 	if pol.AsValidatingAdmissionPolicy() != nil {
-		result.Source = "ValidatingAdmissionPolicy"
+		result.Source = SourceValidatingAdmissionPolicy
 		result.Policy = ruleResult.Name()
 		if ruleResult.ValidatingAdmissionPolicyBinding() != nil {
 			addProperty("binding", ruleResult.ValidatingAdmissionPolicyBinding().Name, &result)
 		}
+	}
+	if pol.AsValidatingPolicy() != nil {
+		result.Source = SourceValidatingPolicy
+	}
+	if pol.AsImageVerificationPolicy() != nil {
+		result.Source = SourceImageVerificationPolicy
 	}
 	return result
 }
